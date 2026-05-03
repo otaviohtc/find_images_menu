@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'dart:io' if (dart.library.html) 'package:find_images_menu/web_stub.dart' show File;
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
@@ -15,16 +13,20 @@ class ImageListScreen extends StatefulWidget {
 
 class _ImageListScreenState extends State<ImageListScreen> {
   final SupabaseClient supabase = Supabase.instance.client;
+  
+  // Listas para armazenar todas as imagens e as imagens filtradas pela pesquisa
   List<Map<String, dynamic>> _images = [];
   List<Map<String, dynamic>> _filteredImages = [];
   bool _isLoading = true;
+  
+  // Controller para o campo de busca
   final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _fetchImages();
-    _searchController.addListener(_filterImages);
+    _fetchImages(); // Busca inicial das imagens
+    _searchController.addListener(_filterImages); // Listener para busca em tempo real
   }
 
   @override
@@ -33,6 +35,7 @@ class _ImageListScreenState extends State<ImageListScreen> {
     super.dispose();
   }
 
+  // Busca as imagens no banco de dados do Supabase
   Future<void> _fetchImages() async {
     setState(() => _isLoading = true);
     try {
@@ -40,22 +43,24 @@ class _ImageListScreenState extends State<ImageListScreen> {
           .from('images')
           .select()
           .order('created_at', ascending: false);
+      
       setState(() {
         _images = List<Map<String, dynamic>>.from(response);
         _filteredImages = _images;
         _isLoading = false;
       });
     } catch (e) {
-      debugPrint('Error fetching images: $e');
+      debugPrint('Erro ao buscar imagens: $e');
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error fetching images: $e')),
+          SnackBar(content: Text('Erro ao carregar imagens: $e')),
         );
       }
     }
   }
 
+  // Filtra a lista de imagens baseado no texto digitado no campo de busca
   void _filterImages() {
     final query = _searchController.text.toLowerCase();
     setState(() {
@@ -66,9 +71,11 @@ class _ImageListScreenState extends State<ImageListScreen> {
     });
   }
 
+  // Abre o modal para adicionar uma nova imagem
   Future<void> _addImage() async {
     final nameController = TextEditingController();
     XFile? selectedImage;
+    Uint8List? imageBytes;
     final ImagePicker picker = ImagePicker();
 
     await showModalBottomSheet(
@@ -91,6 +98,7 @@ class _ImageListScreenState extends State<ImageListScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Barra indicadora de "drag" do modal
               Center(
                 child: Container(
                   width: 50,
@@ -128,11 +136,16 @@ class _ImageListScreenState extends State<ImageListScreen> {
                 ),
               ),
               const SizedBox(height: 20),
+              // Área de seleção de imagem
               GestureDetector(
                 onTap: () async {
                   final XFile? image = await picker.pickImage(source: ImageSource.gallery);
                   if (image != null) {
-                    setModalState(() => selectedImage = image);
+                    final bytes = await image.readAsBytes();
+                    setModalState(() {
+                      selectedImage = image;
+                      imageBytes = bytes;
+                    });
                   }
                 },
                 child: Container(
@@ -141,16 +154,15 @@ class _ImageListScreenState extends State<ImageListScreen> {
                     color: const Color(0xFF2D2D3F),
                     borderRadius: BorderRadius.circular(15),
                     border: Border.all(
-                      color: selectedImage != null ? Colors.blueAccent : Colors.grey[700]!,
+                      color: imageBytes != null ? Colors.blueAccent : Colors.grey[700]!,
                       width: 2,
                     ),
                   ),
-                  child: selectedImage != null
+                  child: imageBytes != null
                       ? ClipRRect(
                           borderRadius: BorderRadius.circular(13),
-                          child: kIsWeb
-                              ? Image.network(selectedImage!.path, fit: BoxFit.cover)
-                              : Image.file(File(selectedImage!.path), fit: BoxFit.cover),
+                          // Exibe o preview da imagem selecionada em memória
+                          child: Image.memory(imageBytes!, fit: BoxFit.cover),
                         )
                       : Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -168,15 +180,15 @@ class _ImageListScreenState extends State<ImageListScreen> {
               const SizedBox(height: 30),
               ElevatedButton(
                 onPressed: () async {
-                  if (nameController.text.isEmpty || selectedImage == null) {
+                  if (nameController.text.isEmpty || selectedImage == null || imageBytes == null) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Please provide both name and image')),
+                      const SnackBar(content: Text('Por favor, preencha o nome e selecione uma imagem')),
                     );
                     return;
                   }
 
-                  Navigator.pop(context);
-                  await _uploadAndSave(nameController.text, selectedImage!);
+                  Navigator.pop(context); // Fecha o modal
+                  await _uploadAndSave(nameController.text, selectedImage!, imageBytes!);
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.blueAccent,
@@ -198,34 +210,32 @@ class _ImageListScreenState extends State<ImageListScreen> {
     );
   }
 
-  Future<void> _uploadAndSave(String name, XFile imageFile) async {
+  // Faz o upload da imagem para o Storage e salva o registro no banco de dados
+  Future<void> _uploadAndSave(String name, XFile imageFile, Uint8List bytes) async {
     setState(() => _isLoading = true);
     try {
       final String fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
       final String path = 'uploads/$fileName';
 
-      // Read as bytes for cross-platform compatibility
-      final Uint8List bytes = await imageFile.readAsBytes();
+      // Upload para o Storage do Supabase (bucket 'images')
+      await supabase.storage.from('images').uploadBinary(path, bytes);
 
-      // Upload to Supabase Storage (assuming bucket 'images' exists)
-      await supabase.storage.from('images').upload(path, bytes);
-
-      // Get Public URL
+      // Obtém a URL pública da imagem recém enviada
       final String publicUrl = supabase.storage.from('images').getPublicUrl(path);
 
-      // Insert into Database
+      // Insere o registro na tabela 'images'
       await supabase.from('images').insert({
         'name': name,
         'url': publicUrl,
       });
 
-      await _fetchImages();
+      await _fetchImages(); // Atualiza a lista após salvar
     } catch (e) {
-      debugPrint('Error uploading image: $e');
+      debugPrint('Erro no upload/salvamento: $e');
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error uploading image: $e')),
+          SnackBar(content: Text('Erro ao salvar imagem: $e')),
         );
       }
     }
@@ -250,6 +260,7 @@ class _ImageListScreenState extends State<ImageListScreen> {
                 ),
               ),
               const SizedBox(height: 20),
+              // Campo de busca
               TextField(
                 controller: _searchController,
                 style: const TextStyle(color: Colors.white),
@@ -266,6 +277,7 @@ class _ImageListScreenState extends State<ImageListScreen> {
                 ),
               ),
               const SizedBox(height: 25),
+              // Grid de imagens com 3 colunas
               Expanded(
                 child: _isLoading
                     ? const Center(child: CircularProgressIndicator(color: Colors.blueAccent))
@@ -276,6 +288,7 @@ class _ImageListScreenState extends State<ImageListScreen> {
                           mainAxisSpacing: 15,
                           childAspectRatio: 1,
                         ),
+                        // O itemCount é a lista filtrada + o botão de adicionar no final
                         itemCount: _filteredImages.length + 1,
                         itemBuilder: (context, index) {
                           if (index == _filteredImages.length) {
@@ -293,13 +306,14 @@ class _ImageListScreenState extends State<ImageListScreen> {
     );
   }
 
+  // Constrói o card individual de cada imagem na grid
   Widget _buildImageCard(Map<String, dynamic> image) {
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(15),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.3),
+            color: Colors.black.withValues(alpha: 0.3),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -310,6 +324,7 @@ class _ImageListScreenState extends State<ImageListScreen> {
         child: Stack(
           fit: StackFit.expand,
           children: [
+            // Imagem carregada da rede via Supabase Public URL
             Image.network(
               image['url'],
               fit: BoxFit.cover,
@@ -327,6 +342,7 @@ class _ImageListScreenState extends State<ImageListScreen> {
                 );
               },
             ),
+            // Overlay com o nome da imagem no rodapé
             Positioned(
               bottom: 0,
               left: 0,
@@ -338,7 +354,7 @@ class _ImageListScreenState extends State<ImageListScreen> {
                     begin: Alignment.bottomCenter,
                     end: Alignment.topCenter,
                     colors: [
-                      Colors.black.withOpacity(0.8),
+                      Colors.black.withValues(alpha: 0.8),
                       Colors.transparent,
                     ],
                   ),
@@ -361,6 +377,7 @@ class _ImageListScreenState extends State<ImageListScreen> {
     );
   }
 
+  // Constrói o botão '+' posicionado no final da grid
   Widget _buildAddButton() {
     return GestureDetector(
       onTap: _addImage,
@@ -369,7 +386,7 @@ class _ImageListScreenState extends State<ImageListScreen> {
           color: const Color(0xFF1E1E2E),
           borderRadius: BorderRadius.circular(15),
           border: Border.all(
-            color: Colors.blueAccent.withOpacity(0.5),
+            color: Colors.blueAccent.withValues(alpha: 0.5),
             width: 2,
             style: BorderStyle.solid,
           ),

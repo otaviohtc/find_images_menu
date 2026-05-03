@@ -5,12 +5,13 @@ import 'package:google_fonts/google_fonts.dart';
 import 'list.dart';
 
 void main() async {
+  // Garante que os bindings do Flutter sejam inicializados antes do carregamento assíncrono
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Load environment variables
+  // Carrega as variáveis de ambiente do arquivo .env
   await dotenv.load(fileName: ".env");
 
-  // Initialize Supabase
+  // Inicializa o cliente do Supabase com as credenciais do .env
   await Supabase.initialize(
     url: dotenv.env['SUPABASE_URL'] ?? '',
     anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
@@ -25,11 +26,12 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Find Images Menu',
+      title: 'Menu Imagens',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
         primarySwatch: Colors.blue,
+        // Define a fonte Outfit como padrão para o app
         textTheme: GoogleFonts.outfitTextTheme(
           ThemeData.dark().textTheme,
         ),
